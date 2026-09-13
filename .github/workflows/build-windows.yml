@@ -1,1 +1,153 @@
+name: Build Windows English-Kannada Translator
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  build:
+
+    runs-on: windows-2022
+
+    steps:
+
+      # ----------------------------------------------------------
+      # 1. Checkout
+      # ----------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------
+      # 2. Python
+      # ----------------------------------------------------------
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ----------------------------------------------------------
+      # 3. Upgrade pip
+      # ----------------------------------------------------------
+
+      - name: Upgrade pip
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+      # ----------------------------------------------------------
+      # 4. Install dependencies
+      # ----------------------------------------------------------
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          pip install -r requirements.txt
+          pip install huggingface_hub
+
+      # ----------------------------------------------------------
+      # 5. Login to Hugging Face
+      # ----------------------------------------------------------
+
+      - name: Configure Hugging Face token
+        shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:HF_TOKEN)) {
+            Write-Error "HF_TOKEN GitHub Secret is missing."
+            exit 1
+          }
+
+          huggingface-cli login `
+            --token "$env:HF_TOKEN" `
+            --add-to-git-credential
+
+      # ----------------------------------------------------------
+      # 6. Download model
+      # ----------------------------------------------------------
+
+      - name: Download IndicTrans2 model
+        shell: pwsh
+        run: |
+          python scripts/download_model.py
+
+      # ----------------------------------------------------------
+      # 7. Verify model
+      # ----------------------------------------------------------
+
+      - name: Verify model files
+        shell: pwsh
+        run: |
+
+          $MODEL="models\indictrans2-en-indic-dist-200M"
+
+          if (!(Test-Path "$MODEL")) {
+            Write-Error "Model directory does not exist."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Model files:"
+          Get-ChildItem "$MODEL" -Recurse |
+            Select-Object FullName,Length
+
+      # ----------------------------------------------------------
+      # 8. Build executable
+      # ----------------------------------------------------------
+
+      - name: Build Windows executable
+        shell: pwsh
+        run: |
+
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --windowed `
+            --name "EnglishKannadaTranslator" `
+            --add-data "models;models" `
+            app.py
+
+      # ----------------------------------------------------------
+      # 9. Copy README and license
+      # ----------------------------------------------------------
+
+      - name: Prepare portable application
+        shell: pwsh
+        run: |
+
+          Copy-Item README.md `
+            "dist\EnglishKannadaTranslator\README.md"
+
+          Copy-Item LICENSE `
+            "dist\EnglishKannadaTranslator\LICENSE"
+
+      # ----------------------------------------------------------
+      # 10. Create ZIP
+      # ----------------------------------------------------------
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+
+          Compress-Archive `
+            -Path "dist\EnglishKannadaTranslator\*" `
+            -DestinationPath `
+            "EnglishKannadaTranslator-Windows-x64.zip" `
+            -Force
+
+      # ----------------------------------------------------------
+      # 11. Upload artifact
+      # ----------------------------------------------------------
+
+      - name: Upload Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: EnglishKannadaTranslator-Windows-x64
+          path: EnglishKannadaTranslator-Windows-x64.zip
+          compression-level: 0
+          retention-days: 30
